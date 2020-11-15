@@ -8,4 +8,7 @@ module.exports = {
     'plugin:@typescript-eslint/recommended',
     'prettier/@typescript-eslint',
   ],
+  rules: {
+    '@typescript-eslint/ban-ts-comment': 'off'
+  }
 };

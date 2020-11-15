@@ -1,5 +1,80 @@
 # Signature Pad [![npm](https://badge.fury.io/js/signature_pad.svg)](https://www.npmjs.com/package/signature_pad) [![Build Status](https://travis-ci.org/szimek/signature_pad.svg?branch=master)](https://travis-ci.org/szimek/signature_pad) [![Code Climate](https://codeclimate.com/github/szimek/signature_pad.png)](https://codeclimate.com/github/szimek/signature_pad)
 
+适用于微信小程序 不支持svg
+
+```typescript
+import React, {
+  useState,
+  useEffect,
+  forwardRef,
+  useImperativeHandle
+} from 'react'
+import Taro, { Events } from '@tarojs/taro'
+import SignaturePad from '@/libs/signature_pad/signature_pad'
+import { getRandomString } from '@/utils/index'
+
+function SignatureCanvas(
+  props: SignatureCanvasProps,
+  ref: React.Ref<SignaturePad | null>
+) {
+  const [CanvasId] = useState(() => `canvas-${getRandomString()}`)
+  const [events] = useState(() => new Events())
+  const [signPad, setSignPad] = useState<SignaturePad | null>(null)
+
+  useEffect(() => {
+    Taro.nextTick(() => {
+      const query = Taro.createSelectorQuery()
+      query.select(`#${CanvasId}`).fields({ node: true, size: true })
+      query.exec(([res]) => {
+        const { node: canvas } = res
+
+        const dpr = Taro.getSystemInfoSync().pixelRatio
+        canvas.pixelRatio = dpr
+        canvas.width = res.width * dpr
+        canvas.height = res.height * dpr
+
+        canvas.addEventListener = (
+          eventName: string,
+          listener: (...args: any[]) => void
+        ) => {
+          events.on(eventName, listener)
+        }
+        canvas.removeEventListener = (
+          eventName: string,
+          listener: (...args: any[]) => void
+        ) => {
+          events.off(eventName, listener)
+        }
+
+        setSignPad(new SignaturePad(canvas))
+      })
+    })
+    // eslint-disable-next-line
+  }, [])
+
+  useImperativeHandle(ref, () => signPad, [signPad])
+
+  return (
+    <canvas
+      id={CanvasId}
+      // @ts-ignore
+      type="2d"
+      className={props.className}
+      disableScroll
+      onTouchStart={(e) => events.trigger('touchstart', e)}
+      onTouchMove={(e) => events.trigger('touchmove', e)}
+      onTouchEnd={(e) => events.trigger('touchend', e)}
+    />
+  )
+}
+
+export default forwardRef(SignatureCanvas)
+
+interface SignatureCanvasProps {
+  className?: string
+}
+```
+
 Signature Pad is a JavaScript library for drawing smooth signatures. It's HTML5 canvas based and uses variable width Bézier curve interpolation based on [Smoother Signatures](http://corner.squareup.com/2012/07/smoother-signatures.html) post by [Square](https://squareup.com).
 It works in all modern desktop and mobile browsers and doesn't depend on any external libraries.
 

@@ -13,12 +13,6 @@ import { Bezier } from './bezier';
 import { BasicPoint, Point } from './point';
 import { throttle } from './throttle';
 
-declare global {
-  interface CSSStyleDeclaration {
-    msTouchAction: string | null;
-  }
-}
-
 export interface Options {
   dotSize?: number | (() => number);
   minWidth?: number;
@@ -28,13 +22,23 @@ export interface Options {
   penColor?: string;
   throttle?: number;
   velocityFilterWeight?: number;
-  onBegin?: (event: MouseEvent | Touch) => void;
-  onEnd?: (event: MouseEvent | Touch) => void;
+  onBegin?: (event: WXTouch) => void;
+  onEnd?: (event: WXTouch) => void;
 }
 
 export interface PointGroup {
   color: string;
   points: BasicPoint[];
+}
+
+interface WXTouchEvent extends UIEvent {
+  changedTouches: WXTouch[];
+  touches: WXTouch[];
+}
+
+interface WXTouch {
+  x: number;
+  y: number;
 }
 
 export default class SignaturePad {
@@ -47,24 +51,23 @@ export default class SignaturePad {
   public penColor: string;
   public throttle: number;
   public velocityFilterWeight: number;
-  public onBegin?: (event: MouseEvent | Touch) => void;
-  public onEnd?: (event: MouseEvent | Touch) => void;
+  public onBegin?: (event: WXTouch) => void;
+  public onEnd?: (event: WXTouch) => void;
 
   // Private stuff
   /* tslint:disable: variable-name */
   private _ctx: CanvasRenderingContext2D;
-  private _mouseButtonDown: boolean;
   private _isEmpty: boolean;
   private _lastPoints: Point[]; // Stores up to 4 most recent points; used to generate a new curve
   private _data: PointGroup[]; // Stores all points in groups (one group per line or dot)
   private _lastVelocity: number;
   private _lastWidth: number;
-  private _strokeMoveUpdate: (event: MouseEvent | Touch) => void;
+  private _strokeMoveUpdate: (event: WXTouch) => void;
   /* tslint:enable: variable-name */
 
   constructor(
     private canvas: HTMLCanvasElement,
-    private options: Options = {},
+    options: Options = {},
   ) {
     this.velocityFilterWeight = options.velocityFilterWeight || 0.7;
     this.minWidth = options.minWidth || 0.5;
@@ -109,13 +112,13 @@ export default class SignaturePad {
 
   public fromDataURL(
     dataUrl: string,
-    options: { ratio?: number; width?: number; height?: number } = {},
+    options: { width?: number; height?: number } = {},
     callback?: (error?: string | Event) => void,
   ): void {
-    const image = new Image();
-    const ratio = options.ratio || window.devicePixelRatio || 1;
-    const width = options.width || this.canvas.width / ratio;
-    const height = options.height || this.canvas.height / ratio;
+    // @ts-ignore
+    const image: HTMLImageElement = this.canvas.createImage();
+    const width = options.width || this.canvas.width;
+    const height = options.height || this.canvas.height;
 
     this._reset();
 
@@ -136,45 +139,19 @@ export default class SignaturePad {
   }
 
   public toDataURL(type = 'image/png', encoderOptions?: number): string {
-    switch (type) {
-      case 'image/svg+xml':
-        return this._toSVG();
-      default:
-        return this.canvas.toDataURL(type, encoderOptions);
-    }
+    return this.canvas.toDataURL(type, encoderOptions);
   }
 
   public on(): void {
-    // Disable panning/zooming when touching canvas element
-    this.canvas.style.touchAction = 'none';
-    this.canvas.style.msTouchAction = 'none';
-
-    if (window.PointerEvent) {
-      this._handlePointerEvents();
-    } else {
-      this._handleMouseEvents();
-
-      if ('ontouchstart' in window) {
-        this._handleTouchEvents();
-      }
-    }
+    this._handleTouchEvents();
   }
 
   public off(): void {
-    // Enable panning/zooming when touching canvas element
-    this.canvas.style.touchAction = 'auto';
-    this.canvas.style.msTouchAction = 'auto';
-
-    this.canvas.removeEventListener('pointerdown', this._handleMouseDown);
-    this.canvas.removeEventListener('pointermove', this._handleMouseMove);
-    document.removeEventListener('pointerup', this._handleMouseUp);
-
-    this.canvas.removeEventListener('mousedown', this._handleMouseDown);
-    this.canvas.removeEventListener('mousemove', this._handleMouseMove);
-    document.removeEventListener('mouseup', this._handleMouseUp);
-
+    // @ts-ignore
     this.canvas.removeEventListener('touchstart', this._handleTouchStart);
+    // @ts-ignore
     this.canvas.removeEventListener('touchmove', this._handleTouchMove);
+    // @ts-ignore
     this.canvas.removeEventListener('touchend', this._handleTouchEnd);
   }
 
@@ -198,57 +175,33 @@ export default class SignaturePad {
     return this._data;
   }
 
-  // Event handlers
-  private _handleMouseDown = (event: MouseEvent): void => {
-    if (event.which === 1) {
-      this._mouseButtonDown = true;
-      this._strokeBegin(event);
-    }
-  };
-
-  private _handleMouseMove = (event: MouseEvent): void => {
-    if (this._mouseButtonDown) {
-      this._strokeMoveUpdate(event);
-    }
-  };
-
-  private _handleMouseUp = (event: MouseEvent): void => {
-    if (event.which === 1 && this._mouseButtonDown) {
-      this._mouseButtonDown = false;
-      this._strokeEnd(event);
-    }
-  };
-
-  private _handleTouchStart = (event: TouchEvent): void => {
+  private _handleTouchStart = (event: WXTouchEvent): void => {
     // Prevent scrolling.
     event.preventDefault();
 
-    if (event.targetTouches.length === 1) {
+    if (event.touches.length === 1) {
       const touch = event.changedTouches[0];
       this._strokeBegin(touch);
     }
   };
 
-  private _handleTouchMove = (event: TouchEvent): void => {
+  private _handleTouchMove = (event: WXTouchEvent): void => {
     // Prevent scrolling.
     event.preventDefault();
 
-    const touch = event.targetTouches[0];
+    const touch = event.touches[0];
     this._strokeMoveUpdate(touch);
   };
 
-  private _handleTouchEnd = (event: TouchEvent): void => {
-    const wasCanvasTouched = event.target === this.canvas;
-    if (wasCanvasTouched) {
-      event.preventDefault();
+  private _handleTouchEnd = (event: WXTouchEvent): void => {
+    event.preventDefault();
 
-      const touch = event.changedTouches[0];
-      this._strokeEnd(touch);
-    }
+    const touch = event.changedTouches[0];
+    this._strokeEnd(touch);
   };
 
   // Private methods
-  private _strokeBegin(event: MouseEvent | Touch): void {
+  private _strokeBegin(event: WXTouch): void {
     const newPointGroup = {
       color: this.penColor,
       points: [],
@@ -263,7 +216,7 @@ export default class SignaturePad {
     this._strokeUpdate(event);
   }
 
-  private _strokeUpdate(event: MouseEvent | Touch): void {
+  private _strokeUpdate(event: WXTouch): void {
     if (this._data.length === 0) {
       // This can happen if clear() was called while a signature is still in progress,
       // or if there is a race condition between start/update events.
@@ -271,10 +224,7 @@ export default class SignaturePad {
       return;
     }
 
-    const x = event.clientX;
-    const y = event.clientY;
-
-    const point = this._createPoint(x, y);
+    const point = this._createPoint(event.x, event.y);
     const lastPointGroup = this._data[this._data.length - 1];
     const lastPoints = lastPointGroup.points;
     const lastPoint =
@@ -302,7 +252,7 @@ export default class SignaturePad {
     }
   }
 
-  private _strokeEnd(event: MouseEvent | Touch): void {
+  private _strokeEnd(event: WXTouch): void {
     this._strokeUpdate(event);
 
     if (typeof this.onEnd === 'function') {
@@ -310,25 +260,12 @@ export default class SignaturePad {
     }
   }
 
-  private _handlePointerEvents(): void {
-    this._mouseButtonDown = false;
-
-    this.canvas.addEventListener('pointerdown', this._handleMouseDown);
-    this.canvas.addEventListener('pointermove', this._handleMouseMove);
-    document.addEventListener('pointerup', this._handleMouseUp);
-  }
-
-  private _handleMouseEvents(): void {
-    this._mouseButtonDown = false;
-
-    this.canvas.addEventListener('mousedown', this._handleMouseDown);
-    this.canvas.addEventListener('mousemove', this._handleMouseMove);
-    document.addEventListener('mouseup', this._handleMouseUp);
-  }
-
   private _handleTouchEvents(): void {
+    // @ts-ignore
     this.canvas.addEventListener('touchstart', this._handleTouchStart);
+    // @ts-ignore
     this.canvas.addEventListener('touchmove', this._handleTouchMove);
+    // @ts-ignore
     this.canvas.addEventListener('touchend', this._handleTouchEnd);
   }
 
@@ -341,9 +278,9 @@ export default class SignaturePad {
   }
 
   private _createPoint(x: number, y: number): Point {
-    const rect = this.canvas.getBoundingClientRect();
-
-    return new Point(x - rect.left, y - rect.top, new Date().getTime());
+    // @ts-ignore
+    const dpr = this.canvas.pixelRatio
+    return new Point(x * dpr, y * dpr, new Date().getTime());
   }
 
   // Add point to _lastPoints array and generate a new curve if there are enough points (i.e. 3)
@@ -499,95 +436,5 @@ export default class SignaturePad {
         });
       }
     }
-  }
-
-  private _toSVG(): string {
-    const pointGroups = this._data;
-    const ratio = Math.max(window.devicePixelRatio || 1, 1);
-    const minX = 0;
-    const minY = 0;
-    const maxX = this.canvas.width / ratio;
-    const maxY = this.canvas.height / ratio;
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-
-    svg.setAttribute('width', this.canvas.width.toString());
-    svg.setAttribute('height', this.canvas.height.toString());
-
-    this._fromData(
-      pointGroups,
-
-      ({ color, curve }: { color: string; curve: Bezier }) => {
-        const path = document.createElement('path');
-
-        // Need to check curve for NaN values, these pop up when drawing
-        // lines on the canvas that are not continuous. E.g. Sharp corners
-        // or stopping mid-stroke and than continuing without lifting mouse.
-        /* eslint-disable no-restricted-globals */
-        if (
-          !isNaN(curve.control1.x) &&
-          !isNaN(curve.control1.y) &&
-          !isNaN(curve.control2.x) &&
-          !isNaN(curve.control2.y)
-        ) {
-          const attr =
-            `M ${curve.startPoint.x.toFixed(3)},${curve.startPoint.y.toFixed(
-              3,
-            )} ` +
-            `C ${curve.control1.x.toFixed(3)},${curve.control1.y.toFixed(3)} ` +
-            `${curve.control2.x.toFixed(3)},${curve.control2.y.toFixed(3)} ` +
-            `${curve.endPoint.x.toFixed(3)},${curve.endPoint.y.toFixed(3)}`;
-          path.setAttribute('d', attr);
-          path.setAttribute('stroke-width', (curve.endWidth * 2.25).toFixed(3));
-          path.setAttribute('stroke', color);
-          path.setAttribute('fill', 'none');
-          path.setAttribute('stroke-linecap', 'round');
-
-          svg.appendChild(path);
-        }
-        /* eslint-enable no-restricted-globals */
-      },
-
-      ({ color, point }: { color: string; point: BasicPoint }) => {
-        const circle = document.createElement('circle');
-        const dotSize =
-          typeof this.dotSize === 'function' ? this.dotSize() : this.dotSize;
-        circle.setAttribute('r', dotSize.toString());
-        circle.setAttribute('cx', point.x.toString());
-        circle.setAttribute('cy', point.y.toString());
-        circle.setAttribute('fill', color);
-
-        svg.appendChild(circle);
-      },
-    );
-
-    const prefix = 'data:image/svg+xml;base64,';
-    const header =
-      '<svg' +
-      ' xmlns="http://www.w3.org/2000/svg"' +
-      ' xmlns:xlink="http://www.w3.org/1999/xlink"' +
-      ` viewBox="${minX} ${minY} ${maxX} ${maxY}"` +
-      ` width="${maxX}"` +
-      ` height="${maxY}"` +
-      '>';
-    let body = svg.innerHTML;
-
-    // IE hack for missing innerHTML property on SVGElement
-    if (body === undefined) {
-      const dummy = document.createElement('dummy');
-      const nodes = svg.childNodes;
-      dummy.innerHTML = '';
-
-      // tslint:disable-next-line: prefer-for-of
-      for (let i = 0; i < nodes.length; i += 1) {
-        dummy.appendChild(nodes[i].cloneNode(true));
-      }
-
-      body = dummy.innerHTML;
-    }
-
-    const footer = '</svg>';
-    const data = header + body + footer;
-
-    return prefix + btoa(data);
   }
 }
